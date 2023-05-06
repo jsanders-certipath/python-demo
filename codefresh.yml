@@ -1,0 +1,75 @@
+version: "1.0"
+stages:
+  - "clone"
+  - "test"
+  - "build"
+  # - "scan"
+  - "approval"
+  - "deploy-test"
+  - "deploy-prod"
+  - "report"
+  -
+steps:
+
+  Clone_Repo:
+    title: "Cloning repository"
+    type: "git-clone"
+    repo: "jsanders-certipath/python-hello-world"
+    revision: "${{CF_BRANCH}}"
+    git: "github"
+    stage: "clone"
+
+  Run_Unit_Tests:
+    title: "Running unit tests"
+    image: "python:3.6-slim"
+    working_directory: "${{Clone_Repo}}"
+    commands:
+      - "pip install -r requirements.txt --cache-dir=/codefresh/volume/pip-cache"
+      - "pytest -s"
+    stage: "test"
+
+  Build_Docker_Image:
+    title: "Building Docker image"
+    type: "build"
+    image_name: "kronos23/python-hello-world"
+    working_directory: "${{Clone_Repo}}"
+    tag: "${{CF_SHORT_REVISION}}"
+    dockerfile: "docker/Dockerfile"
+    stage: "build"
+
+  # Scan_Image:
+  #   title: "Scanning image for security vulnerablities"
+  #   image: snyk/snyk:python-alpine
+  #   stage: scan
+  #   shell: bash
+  #   working_directory: "${{Clone_Repo}}"
+  #   environment:
+  #     - SNYK_TOKEN=${{SNYK_TOKEN}}
+  #     - IMAGE=${{Build_Docker_Image}}
+  #   command:
+  #   - |
+  #     snyk test --severity-threshold=${{SNYK_SEVERITY_THRESHOLD}} || fail=1
+  #     snyk container test --severity-threshold=${{SNYK_SEVERITY_THRESHOLD}} --file=Dockerfile ${LOCAL_IMAGE_REF}
+  #     if [ "$fail" == "1" ]; then exit 1; fi
+
+  approval:
+    type: pending-approval
+    title: Production deploy?
+    stage: approval
+
+  deploy:
+    type: helm
+    stage: deploy-prod
+    when:
+      steps:
+        - name: approval
+          on:
+          - approved
+    arguments:
+      action: install
+      chart_name: "${{CF_REPO_NAME}}-demo"
+      release_name: "${{CF_REPO_NAME}}-prod"
+      helm_version: 3.0.3
+      kube_context: cpio-prod-cluster
+      custom_values:
+        - 'image.tag="${{CF_SHORT_REVISION}}"'
